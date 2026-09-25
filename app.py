@@ -1,127 +1,176 @@
 import streamlit as st
 import pandas as pd
-import io
+from streamlit_gsheets import GSheetsConnection
 
-# Configuración de la página para que se vea amplia en pantallas grandes
 st.set_page_config(page_title="Asistente Dropshipping", layout="wide")
 
-st.title("📊 Asistente de Rentabilidad y Dropshipping")
+# 1. CONEXIÓN A GOOGLE SHEETS
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- MENÚ LATERAL: MEMORIA Y DATOS ---
-st.sidebar.header("1. Carga de Datos")
+# 2. PANTALLA DE INICIO DE SESIÓN
+def login():
+    st.title("🔒 Acceso al Asistente")
+    try:
+        df_usuarios = conn.read(worksheet="Usuarios")
+    except Exception as e:
+        st.error("Error al conectar con Google Sheets. Revisa tus secretos en Streamlit.")
+        return False
 
-st.sidebar.write("**A. Sube tu memoria (Opcional si es tu primer día)**")
-archivo_historial = st.sidebar.file_uploader("Historial Maestro (Excel/CSV)", type=["csv", "xlsx"], key="historial")
+    usuario = st.text_input("Usuario")
+    contrasena = st.text_input("Contraseña", type="password")
+    
+    if st.button("Entrar"):
+        if usuario in df_usuarios['Usuario'].values:
+            pass_correcta = df_usuarios.loc[df_usuarios['Usuario'] == usuario, 'Contraseña'].values[0]
+            if str(contrasena) == str(pass_correcta):
+                st.session_state['logueado'] = True
+                st.session_state['usuario_actual'] = usuario
+                st.rerun()
+            else:
+                st.error("Contraseña incorrecta.")
+        else:
+            st.error("Usuario no encontrado.")
+            
+    return st.session_state.get('logueado', False)
 
-st.sidebar.write("**B. Sube los reportes de HOY**")
-archivo_ordenes_hoy = st.sidebar.file_uploader("Ventas Dropi de Hoy", type=["csv", "xlsx"], key="ordenes")
-archivo_anuncios_hoy = st.sidebar.file_uploader("Gastos Ads de Hoy", type=["csv", "xlsx"], key="ads")
+if 'logueado' not in st.session_state:
+    st.session_state['logueado'] = False
 
-# --- CONFIGURACIÓN DE DIVISAS ---
-st.sidebar.header("2. Divisas")
-tipo_cambio = st.sidebar.number_input("Tipo de cambio: 1 Dólar = X Moneda Local", min_value=0.01, value=19.50)
+if not st.session_state['logueado']:
+    login()
+    st.stop()
 
-# FUNCIÓN PARA UNIR LA MEMORIA CON LO DE HOY
-def procesar_datos(historial, nuevos_datos):
-    # Si hay historial y datos nuevos, los pega uno debajo del otro
-    if historial is not None and nuevos_datos is not None:
-        df_historial = pd.read_csv(historial) if historial.name.endswith('.csv') else pd.read_excel(historial)
-        df_nuevos = pd.read_csv(nuevos_datos) if nuevos_datos.name.endswith('.csv') else pd.read_excel(nuevos_datos)
-        return pd.concat([df_historial, df_nuevos], ignore_index=True)
-    # Si solo hay datos nuevos (primer día)
-    elif nuevos_datos is not None:
-        return pd.read_csv(nuevos_datos) if nuevos_datos.name.endswith('.csv') else pd.read_excel(nuevos_datos)
-    return None
+# ---------------------------------------------------------
+# APLICACIÓN PRINCIPAL
+# ---------------------------------------------------------
+usuario_activo = st.session_state['usuario_actual']
+st.sidebar.success(f"👤 Sesión activa: {usuario_activo}")
+if st.sidebar.button("Cerrar Sesión"):
+    st.session_state['logueado'] = False
+    st.session_state['usuario_actual'] = None
+    st.rerun()
 
-# Procesamos las ventas
-df_ventas = procesar_datos(archivo_historial, archivo_ordenes_hoy)
+st.title("📊 Asistente de Rentabilidad para Dropshipping")
+
+# --- SECCIÓN: CONFIGURACIÓN DE DIVISAS ---
+st.sidebar.header("1. Configuración de Divisas")
+divisas_opciones = ["MXN", "GTQ", "USD", "COP", "EUR"]
+
+divisa_origen = st.sidebar.selectbox("Divisa ORIGEN (Utilidad/Retiro)", divisas_opciones, index=0)
+divisa_ads = st.sidebar.selectbox("Divisa ADS (Publicidad)", divisas_opciones, index=0)
+divisa_dropi = st.sidebar.selectbox("Divisa DROPI (Artículos)", divisas_opciones, index=1)
+
+st.sidebar.write(f"**Valor respecto a 1 {divisa_origen}:**")
+tasa_ads = st.sidebar.number_input(f"1 {divisa_ads} equivale a:", value=1.000)
+tasa_dropi = st.sidebar.number_input(f"1 {divisa_dropi} equivale a:", value=0.430)
+
+# --- SECCIÓN: CARGA DE DATOS ---
+st.sidebar.header("2. Cargar Reportes del Día")
+archivo_ordenes_hoy = st.sidebar.file_uploader("Sube Ventas (Dropi)", type=["csv", "xlsx"])
+archivo_anuncios_hoy = st.sidebar.file_uploader("Sube Ads (Publicidad)", type=["csv", "xlsx"])
+
+if st.sidebar.button("💾 Guardar Hoy en Memoria"):
+    if archivo_ordenes_hoy is not None and archivo_anuncios_hoy is not None:
+        with st.spinner('Guardando datos para tu usuario...'):
+            df_ordenes_hoy = pd.read_excel(archivo_ordenes_hoy)
+            df_ads_hoy = pd.read_csv(archivo_anuncios_hoy)
+            
+            # Etiquetar los datos con el usuario activo
+            df_ordenes_hoy['Usuario'] = usuario_activo
+            df_ads_hoy['Usuario'] = usuario_activo
+            
+            memoria_ordenes = conn.read(worksheet="Memoria_Ordenes")
+            memoria_ads = conn.read(worksheet="Memoria_Ads")
+            
+            nuevas_ordenes = pd.concat([memoria_ordenes, df_ordenes_hoy], ignore_index=True)
+            nuevos_ads = pd.concat([memoria_ads, df_ads_hoy], ignore_index=True)
+            
+            conn.update(worksheet="Memoria_Ordenes", data=nuevas_ordenes)
+            conn.update(worksheet="Memoria_Ads", data=nuevos_ads)
+            
+            st.sidebar.success("¡Datos guardados y aislados correctamente!")
+    else:
+        st.sidebar.warning("Sube ambos archivos primero.")
+
+# --- LECTURA Y FILTRADO DE MEMORIA ---
+df_ordenes_full = conn.read(worksheet="Memoria_Ordenes")
+df_ads_full = conn.read(worksheet="Memoria_Ads")
+
+# Filtrar para que el usuario solo vea sus propios datos
+if not df_ordenes_full.empty and 'Usuario' in df_ordenes_full.columns:
+    df_ordenes = df_ordenes_full[df_ordenes_full['Usuario'] == usuario_activo]
+else:
+    df_ordenes = pd.DataFrame()
+
+if not df_ads_full.empty and 'Usuario' in df_ads_full.columns:
+    df_ads = df_ads_full[df_ads_full['Usuario'] == usuario_activo]
+else:
+    df_ads = pd.DataFrame()
 
 # --- PANEL PRINCIPAL ---
-tab1, tab2, tab3, tab4 = st.tabs(["📈 Dashboard y Rentabilidad", "🧮 Calculadora de Precios", "🔗 Enlace de Anuncios", "🧠 Recomendaciones (IA)"])
+tab1, tab2, tab3 = st.tabs(["📈 Dashboard y Rentabilidad", "🧮 Calculadora de Precios", "🧠 Recomendaciones y Ads"])
 
 with tab1:
-    st.header("Resumen de tu Negocio")
-    if df_ventas is not None:
-        st.success("Datos cargados correctamente.")
+    st.header("Resumen General")
+    if not df_ordenes.empty:
+        total_ordenes = len(df_ordenes)
+        entregadas = len(df_ordenes[df_ordenes['ESTATUS'] == 'ENTREGADO'])
+        canceladas = len(df_ordenes[df_ordenes['ESTATUS'] == 'CANCELADO'])
         
-        # Simulamos indicadores rápidos (Estos se calcularían leyendo tus columnas reales)
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Órdenes Totales", "145", "+12 hoy")
-        col2.metric("Entregadas", "120", "82%")
-        col3.metric("Devoluciones", "15", "10%")
-        col4.metric("Cancelaciones", "10", "8%")
-        
-        st.subheader("Tabla de Rentabilidad Diaria")
-        st.write("Semáforo: Compara tu ingreso por ventas vs el costo de anuncios y proveedores.")
-        # Tabla de ejemplo de cómo se verá el semáforo
-        datos_ejemplo = pd.DataFrame({
-            "Fecha": ["23-Sep", "24-Sep"],
-            "Ventas Totales": ["$5,000", "$6,200"],
-            "Costo Proveedor": ["$1,500", "$1,800"],
-            "Gasto Publicidad": ["$800", "$950"],
-            "Utilidad Neta": ["$2,700", "$3,450"],
-            "Rentable": ["✅ Sí", "✅ Sí"]
-        })
-        st.dataframe(datos_ejemplo, use_container_width=True)
+        col1.metric("Órdenes Totales", total_ordenes)
+        col2.metric("Entregadas", entregadas)
+        col3.metric("Cancelaciones", canceladas)
+        col4.metric("% Cancelación", f"{(canceladas/total_ordenes)*100 if total_ordenes > 0 else 0:.1f}%")
 
-        # Botón para descargar la nueva memoria unificada
-        st.subheader("💾 Guarda tu nueva Memoria")
-        st.write("Descarga este archivo y súbelo mañana en 'Historial Maestro' para no perder tu información.")
+        st.subheader(f"Rentabilidad en {divisa_origen}")
         
-        # Convertimos el archivo a Excel para descargar
-        buffer = io.BytesIO()
-        df_ventas.to_excel(buffer, index=False)
-        st.download_button(
-            label="⬇️ Descargar Nuevo Historial Maestro",
-            data=buffer.getvalue(),
-            file_name="Historial_Maestro_Actualizado.xlsx",
-            mime="application/vnd.ms-excel"
-        )
+        # Conversión de divisas al vuelo para los cálculos
+        ingreso_total = df_ordenes['TOTAL DE LA ORDEN'].sum() * tasa_dropi
+        costo_flete = df_ordenes['PRECIO FLETE'].sum() * tasa_dropi
+        costo_proveedor = df_ordenes['PRECIO PROVEEDOR X CANTIDAD'].sum() * tasa_dropi
+        
+        gasto_ads = df_ads['Importe gastado (MXN)'].sum() * tasa_ads if not df_ads.empty else 0
+        
+        utilidad = ingreso_total - costo_flete - costo_proveedor - gasto_ads
+        
+        st.metric("Utilidad Total (Bruta)", f"${utilidad:,.2f} {divisa_origen}")
     else:
-        st.info("Sube tus archivos en el menú lateral para ver tu Dashboard.")
+        st.info("Tu memoria está vacía. Sube reportes para comenzar.")
 
 with tab2:
-    st.header("Calculadora de Precios Inteligente")
-    tipo_prod = st.radio("Tipo de Producto", ("Nuevo (Estimación manual)", "Existente (+15 días con datos reales)"))
-    
+    st.header(f"Calculadora de Precios Inteligente ({divisa_origen})")
     colA, colB = st.columns(2)
     with colA:
-        costo_prov = st.number_input("Costo del Proveedor", value=100.0)
-        costo_flete = st.number_input("Costo de Envío/Flete", value=150.0)
-        cpa_esperado = st.number_input("Costo por Compra en Ads (CPA)", value=80.0)
+        costo_prov = st.number_input(f"Costo Proveedor ({divisa_dropi})", value=45.0) * tasa_dropi
+        costo_flete_est = st.number_input(f"Envío Promedio ({divisa_dropi})", value=50.0) * tasa_dropi
+        cpa_esperado = st.number_input(f"CPA Esperado ({divisa_ads})", value=50.0) * tasa_ads
     
     with colB:
-        if tipo_prod == "Nuevo (Estimación manual)":
-            tasa_dev = st.slider("Tasa de Devoluciones (%)", 0, 100, 15) / 100
-            tasa_canc = st.slider("Tasa de Cancelaciones (%)", 0, 100, 5) / 100
-        else:
-            st.success("Usando historial de tu base de datos: Dev 12%, Canc 4%")
-            tasa_dev, tasa_canc = 0.12, 0.04
+        tasa_dev = st.slider("Tasa Devoluciones (%)", 0, 100, 15) / 100
+        tasa_canc = st.slider("Tasa Cancelaciones (%)", 0, 100, 5) / 100
             
-    precio_sugerido = (costo_prov + costo_flete + cpa_esperado) / (1 - tasa_dev - tasa_canc)
-    st.metric("Precio Mínimo de Venta Sugerido (Punto de Equilibrio)", f"${precio_sugerido:,.2f}")
+    precio_sugerido_origen = (costo_prov + costo_flete_est + cpa_esperado) / (1 - tasa_dev - tasa_canc)
+    precio_sugerido_dropi = precio_sugerido_origen / tasa_dropi if tasa_dropi > 0 else 0
+    
+    st.success(f"Precio Mínimo de Venta: **${precio_sugerido_dropi:,.2f} {divisa_dropi}** (Equivalente a ${precio_sugerido_origen:,.2f} {divisa_origen})")
 
 with tab3:
-    st.header("🔗 Enlazar Publicidad con Tienda")
-    st.write("Asigna cada campaña publicitaria a su producto correspondiente para medir el costo exacto.")
-    
-    col_camp, col_prod = st.columns(2)
-    with col_camp:
-        st.write("**Campañas Activas (De tu archivo Ads)**")
-        st.write("1. Campaña_Reloj_TikTok")
-        st.write("2. Campaña_Audifonos_FB")
-        
-    with col_prod:
-        st.write("**Selecciona el producto (De tu archivo Dropi)**")
-        prod1 = st.selectbox("Producto para campaña 1", ["Reloj Inteligente", "Audífonos Pro", "Lámpara LED"], key="p1")
-        prod2 = st.selectbox("Producto para campaña 2", ["Audífonos Pro", "Reloj Inteligente", "Lámpara LED"], index=1, key="p2")
-        
-    st.button("Guardar Enlaces")
-
-with tab4:
-    st.header("🧠 Recomendaciones Estratégicas")
-    st.write("Basado en el cálculo de tu Punto de Equilibrio y tu historial de ventas:")
-    
-    st.warning("⚠️ **Apagar:** El anuncio 'Campaña_Audifonos_FB' está costando $120 por venta, pero tu punto de equilibrio es $90. Estás perdiendo dinero.")
-    st.success("🚀 **Escalar:** El anuncio 'Campaña_Reloj_TikTok' está consiguiendo ventas a $45. Tu margen de ganancia es altísimo. ¡Aumenta el presupuesto un 20% hoy!")
-    st.info("💡 **Producto:** El 'Reloj Inteligente' tiene una tasa de entrega del 95%. Se recomienda buscar más proveedores para este tipo de producto.")
+    st.header("Analizador de Anuncios y Recomendaciones")
+    if not df_ads.empty and 'Nombre de la campaña' in df_ads.columns:
+        for index, row in df_ads.iterrows():
+            costo_ads_original = row['Costo por compra (MXN)']
+            if pd.notna(costo_ads_original):
+                costo_origen = costo_ads_original * tasa_ads
+                nombre = row['Nombre de la campaña']
+                
+                # Ajusta tus límites de CPA según tu estrategia
+                limite_alto = 150 * tasa_ads
+                limite_bajo = 80 * tasa_ads
+                
+                if costo_origen > limite_alto:
+                    st.warning(f"⚠️ **Apagar:** '{nombre}' tiene un CPA de ${costo_origen:.2f} {divisa_origen}.")
+                elif costo_origen < limite_bajo:
+                    st.success(f"🚀 **Escalar:** '{nombre}' va excelente con un CPA de ${costo_origen:.2f} {divisa_origen}.")
+    else:
+        st.write("No hay datos de anuncios registrados para tu usuario.")
