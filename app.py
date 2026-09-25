@@ -11,25 +11,33 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def login():
     st.title("🔒 Acceso al Asistente")
     try:
+        # Usamos ttl=0 para que NUNCA guarde fotos viejas y siempre lea en vivo
         df_usuarios = conn.read(worksheet="Usuarios", ttl=0)
-        
-        # --- ESTA LÍNEA NUEVA LIMPIA LOS ESPACIOS FANTASMAS ---
         df_usuarios.columns = df_usuarios.columns.str.strip() 
-        
     except Exception as e:
-        st.error("Error al conectar con Google Sheets. Revisa tus secretos en Streamlit.")
+        st.error("Error al conectar con Google Sheets.")
         return False
 
     usuario = st.text_input("Usuario")
     contrasena = st.text_input("Contraseña", type="password")
-
     
     if st.button("Entrar"):
-        if usuario in df_usuarios['Usuario'].values:
-            pass_correcta = df_usuarios.loc[df_usuarios['Usuario'] == usuario, 'Contraseña'].values[0]
-            if str(contrasena) == str(pass_correcta):
+        # 1. Quitamos espacios fantasma de toda la lista de usuarios
+        usuarios_lista = df_usuarios['Usuario'].astype(str).str.strip().values
+        usuario_limpio = usuario.strip()
+        
+        if usuario_limpio in usuarios_lista:
+            # 2. Buscamos la contraseña y la limpiamos
+            pass_correcta = str(df_usuarios.loc[df_usuarios['Usuario'].astype(str).str.strip() == usuario_limpio, 'Contraseña'].values[0]).strip()
+            
+            # 3. Truco de magia: Si Pandas le puso ".0" al final por ser número, se lo quitamos
+            if pass_correcta.endswith(".0"):
+                pass_correcta = pass_correcta[:-2]
+                
+            # 4. Comparamos todo súper limpio
+            if str(contrasena).strip() == pass_correcta:
                 st.session_state['logueado'] = True
-                st.session_state['usuario_actual'] = usuario
+                st.session_state['usuario_actual'] = usuario_limpio
                 st.rerun()
             else:
                 st.error("Contraseña incorrecta.")
@@ -37,6 +45,7 @@ def login():
             st.error("Usuario no encontrado.")
             
     return st.session_state.get('logueado', False)
+
 
 if 'logueado' not in st.session_state:
     st.session_state['logueado'] = False
