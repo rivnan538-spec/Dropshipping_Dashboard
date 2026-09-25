@@ -12,12 +12,17 @@ def login():
     st.title("🔒 Acceso al Asistente")
     try:
         df_usuarios = conn.read(worksheet="Usuarios")
+        
+        # --- ESTA LÍNEA NUEVA LIMPIA LOS ESPACIOS FANTASMAS ---
+        df_usuarios.columns = df_usuarios.columns.str.strip() 
+        
     except Exception as e:
         st.error("Error al conectar con Google Sheets. Revisa tus secretos en Streamlit.")
         return False
 
     usuario = st.text_input("Usuario")
     contrasena = st.text_input("Contraseña", type="password")
+
     
     if st.button("Entrar"):
         if usuario in df_usuarios['Usuario'].values:
