@@ -11,7 +11,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def login():
     st.title("🔒 Acceso al Asistente")
     try:
-        df_usuarios = conn.read(worksheet="Usuarios")
+        df_usuarios = conn.read(worksheet="Usuarios", ttl=0)
         
         # --- ESTA LÍNEA NUEVA LIMPIA LOS ESPACIOS FANTASMAS ---
         df_usuarios.columns = df_usuarios.columns.str.strip() 
