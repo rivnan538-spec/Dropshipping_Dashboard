@@ -68,9 +68,28 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def leer_hoja(nombre, ttl=60):
     try:
         df = conn.read(worksheet=nombre, ttl=ttl)
-        return df.dropna(how="all")
+        df = df.dropna(how="all")
+        df.columns = [str(c).strip() for c in df.columns]
+        return df
     except Exception:
         return pd.DataFrame()
+
+
+def verificar_columnas(df, columnas_requeridas, nombre_hoja):
+    """Muestra un error claro en vez de un KeyError crudo si faltan columnas esperadas."""
+    faltantes = [c for c in columnas_requeridas if c not in df.columns]
+    if faltantes:
+        st.error(
+            f"En tu hoja **{nombre_hoja}** faltan estas columnas: {faltantes}. "
+            f"Columnas encontradas: {list(df.columns)}. "
+            "Revisa el encabezado (fila 1) de esa pestaña en Google Sheets — seguramente quedó "
+            "una fila vieja sin esa columna o el nombre no coincide exactamente (mayúsculas, "
+            "acentos o espacios). Si tienes datos de prueba incompatibles, lo más rápido es "
+            "borrar el contenido de esa pestaña (dejando solo el encabezado correcto) y volver "
+            "a subir tus reportes desde el Panel de Control."
+        )
+        return False
+    return True
 
 
 def _filtrar_usuario(df, usuario):
@@ -438,9 +457,13 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
 # ==============================================================================
 # TAB 1 — DASHBOARD
 # ==============================================================================
+COLS_ORDENES_REQUERIDAS = ["ID", "ESTATUS", "TOTAL DE LA ORDEN", "PRECIO PROVEEDOR X CANTIDAD", "PRECIO FLETE", "CANTIDAD", "PRODUCTO", "FECHA_iso"]
+
 with tab1:
     if df_ordenes.empty:
         st.info("Tu memoria está vacía todavía. Ve a ⚙️ Panel de Control para subir tus primeros reportes.")
+    elif not verificar_columnas(df_ordenes, COLS_ORDENES_REQUERIDAS, HOJAS["ordenes"]):
+        pass
     else:
         ini, fin = selector_rango_fechas("dash")
         df_rango = df_ordenes[(df_ordenes["FECHA_dt"].dt.date >= ini) & (df_ordenes["FECHA_dt"].dt.date <= fin)]
@@ -498,9 +521,13 @@ with tab1:
 # ==============================================================================
 # TAB 2 — ANUNCIOS
 # ==============================================================================
+COLS_ADS_REQUERIDAS = ["Nombre de la campaña", "Nombre del conjunto de anuncios", "Nombre del anuncio", "FECHA_iso"]
+
 with tab2:
     if df_ads.empty:
         st.info("Aún no subes reportes de Meta Ads. Ve a ⚙️ Panel de Control.")
+    elif not verificar_columnas(df_ads, COLS_ADS_REQUERIDAS, HOJAS["ads"]):
+        pass
     else:
         ini, fin = selector_rango_fechas("ads")
         df_ads_rango = df_ads[(pd.to_datetime(df_ads["FECHA_iso"]).dt.date >= ini) & (pd.to_datetime(df_ads["FECHA_iso"]).dt.date <= fin)].copy()
@@ -715,6 +742,8 @@ with tab4:
     st.subheader("6. Vincular anuncios a productos")
     if df_ads.empty:
         st.info("Sube primero un reporte de anuncios.")
+    elif not verificar_columnas(df_ads, COLS_ADS_REQUERIDAS, HOJAS["ads"]):
+        pass
     else:
         combinaciones = df_ads[["Nombre de la campaña", "Nombre del conjunto de anuncios", "Nombre del anuncio"]].drop_duplicates()
         ya_vinculadas = set(zip(df_vinc.get("Campaña", []), df_vinc.get("Conjunto_Anuncios", []), df_vinc.get("Anuncio", [])))
@@ -745,6 +774,8 @@ with tab4:
 with tab5:
     if df_ordenes.empty:
         st.info("Sin datos todavía.")
+    elif not verificar_columnas(df_ordenes, COLS_ORDENES_REQUERIDAS, HOJAS["ordenes"]):
+        pass
     else:
         ini, fin = selector_rango_fechas("rent")
         df_rango = df_ordenes[(df_ordenes["FECHA_dt"].dt.date >= ini) & (df_ordenes["FECHA_dt"].dt.date <= fin)]
@@ -784,6 +815,8 @@ with tab6:
     st.header("🧭 Recomendaciones para la próxima semana")
     if df_ads.empty or df_ordenes.empty:
         st.info("Necesito al menos historial de órdenes y de anuncios para generar recomendaciones.")
+    elif not verificar_columnas(df_ads, COLS_ADS_REQUERIDAS, HOJAS["ads"]) or not verificar_columnas(df_ordenes, COLS_ORDENES_REQUERIDAS, HOJAS["ordenes"]):
+        pass
     else:
         dias_analisis = st.slider("Días de historial a analizar", 7, 60, 14)
         desde = date.today() - timedelta(days=dias_analisis)
