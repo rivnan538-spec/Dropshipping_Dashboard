@@ -435,10 +435,14 @@ if st.sidebar.button("Cerrar Sesión"):
     st.rerun()
 st.sidebar.caption(f"Divisa origen actual: **{DO}** — cámbiala en ⚙️ Panel de Control")
 
-# Aseguramos que la tasa de HOY quede registrada en el histórico (automático)
-if not config["Usar_TC_Manual"]:
-    registrar_tasa_hoy(DD, DO)
-    registrar_tasa_hoy(DA, DO)
+# Aseguramos que la tasa de HOY quede registrada en el histórico (automático, una vez por sesión)
+if not config["Usar_TC_Manual"] and not st.session_state.get("tasas_registradas_hoy"):
+    try:
+        registrar_tasa_hoy(DD, DO)
+        registrar_tasa_hoy(DA, DO)
+    except Exception as e:
+        st.warning(f"No se pudo actualizar el tipo de cambio automático de hoy (se usará el último disponible). Detalle: {e}")
+    st.session_state["tasas_registradas_hoy"] = True
 
 df_tc = leer_hoja(HOJAS["tipo_cambio"], ttl=300)
 df_ordenes = cargar_ordenes(usuario_activo)
