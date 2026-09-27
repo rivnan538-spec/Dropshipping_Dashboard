@@ -788,8 +788,18 @@ with tab4:
                 st.success(f"Órdenes: {n} filas nuevas agregadas (se ignoraron duplicados por ID).")
             if archivo_ads is not None:
                 df_new_ads = pd.read_csv(archivo_ads)
-                if "Nombre de la campaña" not in df_new_ads.columns:
-                    st.error("Este CSV no trae la columna 'Nombre de la campaña'. Agrégala al exportar desde Ads Manager.")
+                cols_requeridas_ads = ["Nombre de la campaña", "Nombre del conjunto de anuncios", "Nombre del anuncio"]
+                faltantes = [c for c in cols_requeridas_ads if c not in df_new_ads.columns]
+                if faltantes:
+                    if "Nombre del conjunto de anuncios" in faltantes or "Nombre del anuncio" in faltantes:
+                        st.error(
+                            f"Este CSV no trae {faltantes}. Parece el reporte **por Campaña** de Ads Manager "
+                            "(nivel campaña), pero aquí necesitas el reporte **por Anuncio** (nivel más detallado, "
+                            "con columnas de Campaña + Conjunto de anuncios + Anuncio). Revisa que estés exportando "
+                            "desde la vista 'Anuncios' en Ads Manager, no desde la vista 'Campañas'."
+                        )
+                    else:
+                        st.error(f"Este CSV no trae {faltantes}. Agrégalas al exportar desde Ads Manager.")
                 else:
                     n = guardar_ads(usuario_activo, df_new_ads)
                     st.success(f"Anuncios: {n} filas nuevas agregadas (se ignoraron duplicados).")
