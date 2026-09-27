@@ -300,6 +300,17 @@ def cargar_ads(usuario):
     return df, divisa_detectada
 
 
+def _limpiar_id(serie):
+    """Normaliza IDs para comparar: evita que '1234567' vs '1234567.0' (que Google Sheets
+    agrega solo a veces a columnas numéricas) se traten como pedidos distintos."""
+    s = serie.astype(str).str.strip()
+    return s.str.replace(r"\.0$", "", regex=True)
+
+
+def _limpiar_fecha(serie):
+    return pd.to_datetime(serie, errors="coerce").dt.strftime("%Y-%m-%d")
+
+
 def guardar_ordenes(usuario, df_nuevo):
     df_nuevo = df_nuevo.copy()
     df_nuevo["Usuario"] = usuario
@@ -310,12 +321,13 @@ def guardar_ordenes(usuario, df_nuevo):
         agregadas = len(df_nuevo)
     else:
         if "ID" in df_actual.columns and "ID" in df_nuevo.columns:
-            existentes = set(zip(df_actual["Usuario"].astype(str), df_actual["ID"].astype(str)))
-            antes = len(df_nuevo)
-            df_nuevo = df_nuevo[~df_nuevo.apply(lambda r: (str(r["Usuario"]), str(r["ID"])) in existentes, axis=1)]
-            agregadas = len(df_nuevo)
-        else:
-            agregadas = len(df_nuevo)
+            prod_actual = df_actual["PRODUCTO"].astype(str).str.strip() if "PRODUCTO" in df_actual.columns else ""
+            prod_nuevo = df_nuevo["PRODUCTO"].astype(str).str.strip() if "PRODUCTO" in df_nuevo.columns else ""
+            existentes = set(zip(df_actual["Usuario"].astype(str).str.strip(), _limpiar_id(df_actual["ID"]), prod_actual))
+            claves_nuevo = list(zip(df_nuevo["Usuario"].astype(str).str.strip(), _limpiar_id(df_nuevo["ID"]), prod_nuevo))
+            mask_nuevo = [k not in existentes for k in claves_nuevo]
+            df_nuevo = df_nuevo[mask_nuevo]
+        agregadas = len(df_nuevo)
         df_final = pd.concat([df_actual, df_nuevo], ignore_index=True)
     conn.update(worksheet=HOJAS["ordenes"], data=df_final)
     st.cache_data.clear()
@@ -326,15 +338,20 @@ def guardar_ads(usuario, df_nuevo):
     df_nuevo = df_nuevo.copy()
     df_nuevo["Usuario"] = usuario
     df_nuevo["Fecha_Carga"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-    claves = ["Usuario", "Nombre de la campaña", "Nombre del conjunto de anuncios", "Nombre del anuncio", "Inicio del informe"]
+    cols_texto = ["Usuario", "Nombre de la campaña", "Nombre del conjunto de anuncios", "Nombre del anuncio"]
     df_actual = leer_hoja(HOJAS["ads"], ttl=0)
     if df_actual.empty:
         df_final = df_nuevo
         agregadas = len(df_nuevo)
     else:
-        if all(c in df_actual.columns for c in claves) and all(c in df_nuevo.columns for c in claves):
-            existentes = set(df_actual[claves].astype(str).apply(tuple, axis=1))
-            df_nuevo = df_nuevo[~df_nuevo[claves].astype(str).apply(tuple, axis=1).isin(existentes)]
+        if all(c in df_actual.columns for c in cols_texto + ["Inicio del informe"]) and all(c in df_nuevo.columns for c in cols_texto + ["Inicio del informe"]):
+            claves_actual = df_actual[cols_texto].astype(str).apply(lambda c: c.str.strip())
+            claves_actual["_f"] = _limpiar_fecha(df_actual["Inicio del informe"])
+            existentes = set(claves_actual.apply(tuple, axis=1))
+            claves_nuevo = df_nuevo[cols_texto].astype(str).apply(lambda c: c.str.strip())
+            claves_nuevo["_f"] = _limpiar_fecha(df_nuevo["Inicio del informe"])
+            mask_nuevo = ~claves_nuevo.apply(tuple, axis=1).isin(existentes)
+            df_nuevo = df_nuevo[mask_nuevo.values]
         agregadas = len(df_nuevo)
         df_final = pd.concat([df_actual, df_nuevo], ignore_index=True)
     conn.update(worksheet=HOJAS["ads"], data=df_final)
@@ -362,6 +379,42 @@ def guardar_vinculo(usuario, campana, conjunto, anuncio, producto):
     df = pd.concat([df, pd.DataFrame([nueva])], ignore_index=True)
     conn.update(worksheet=HOJAS["vinculacion"], data=df)
     st.cache_data.clear()
+
+
+def limpiar_duplicados_ordenes(usuario):
+    df = leer_hoja(HOJAS["ordenes"], ttl=0)
+    if df.empty or "ID" not in df.columns:
+        return 0
+    df["_clave_usuario"] = df["Usuario"].astype(str).str.strip()
+    df["_clave_id"] = _limpiar_id(df["ID"])
+    df["_clave_producto"] = df["PRODUCTO"].astype(str).str.strip() if "PRODUCTO" in df.columns else ""
+    antes = len(df)
+    df_sin_duplicados = df.drop_duplicates(subset=["_clave_usuario", "_clave_id", "_clave_producto"], keep="first")
+    eliminadas = antes - len(df_sin_duplicados)
+    if eliminadas > 0:
+        df_sin_duplicados = df_sin_duplicados.drop(columns=["_clave_usuario", "_clave_id", "_clave_producto"])
+        conn.update(worksheet=HOJAS["ordenes"], data=df_sin_duplicados)
+        st.cache_data.clear()
+    return eliminadas
+
+
+def limpiar_duplicados_ads(usuario):
+    df = leer_hoja(HOJAS["ads"], ttl=0)
+    cols_texto = ["Usuario", "Nombre de la campaña", "Nombre del conjunto de anuncios", "Nombre del anuncio"]
+    if df.empty or not all(c in df.columns for c in cols_texto + ["Inicio del informe"]):
+        return 0
+    for c in cols_texto:
+        df[f"_clave_{c}"] = df[c].astype(str).str.strip()
+    df["_clave_fecha"] = _limpiar_fecha(df["Inicio del informe"])
+    claves = [f"_clave_{c}" for c in cols_texto] + ["_clave_fecha"]
+    antes = len(df)
+    df_sin_duplicados = df.drop_duplicates(subset=claves, keep="first")
+    eliminadas = antes - len(df_sin_duplicados)
+    if eliminadas > 0:
+        df_sin_duplicados = df_sin_duplicados.drop(columns=claves)
+        conn.update(worksheet=HOJAS["ads"], data=df_sin_duplicados)
+        st.cache_data.clear()
+    return eliminadas
 
 
 # ==============================================================================
@@ -770,6 +823,29 @@ with tab4:
         if not df_vinc.empty:
             with st.expander("Ver / editar vínculos existentes"):
                 st.dataframe(df_vinc[["Campaña", "Conjunto_Anuncios", "Anuncio", "Producto"]], use_container_width=True, hide_index=True)
+
+
+    st.divider()
+    st.subheader("7. Limpieza de duplicados")
+    st.caption(
+        "Usa esto si notas que tus totales no cuadran con Dropi/Meta — puede pasar si un mismo "
+        "reporte se subió más de una vez antes de que existiera el control de duplicados."
+    )
+    c1, c2 = st.columns(2)
+    if c1.button("🧹 Detectar y eliminar duplicados en Órdenes"):
+        eliminadas = limpiar_duplicados_ordenes(usuario_activo)
+        if eliminadas > 0:
+            st.success(f"Se eliminaron {eliminadas} filas duplicadas de Memoria_Ordenes.")
+        else:
+            st.info("No se encontraron duplicados.")
+        st.rerun()
+    if c2.button("🧹 Detectar y eliminar duplicados en Anuncios"):
+        eliminadas = limpiar_duplicados_ads(usuario_activo)
+        if eliminadas > 0:
+            st.success(f"Se eliminaron {eliminadas} filas duplicadas de Memoria_Ads.")
+        else:
+            st.info("No se encontraron duplicados.")
+        st.rerun()
 
 
 # ==============================================================================
