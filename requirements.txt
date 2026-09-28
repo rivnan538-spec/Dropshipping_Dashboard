@@ -5,3 +5,4 @@ plotly
 requests
 st-gsheets-connection
 openpyxl
+tzdata
