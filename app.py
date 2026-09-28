@@ -759,6 +759,10 @@ with tab4:
     tasa_dev_manual = c1.slider("Tasa de devoluciones manual (%)", 0, 90, int(config["Tasa_Devolucion_Manual"] * 100), disabled=not usar_manual_tasas) / 100
     tasa_canc_manual = c2.slider("Tasa de cancelaciones manual (%)", 0, 90, int(config["Tasa_Cancelacion_Manual"] * 100), disabled=not usar_manual_tasas) / 100
 
+    if st.session_state.get("_msg_config"):
+        tipo, texto = st.session_state.pop("_msg_config")
+        getattr(st, tipo)(texto)
+
     if st.button("💾 Guardar configuración"):
         guardar_config(usuario_activo, {
             "Divisa_Origen": nueva_do, "Divisa_Ads": nueva_da, "Divisa_Dropi": nueva_dd,
@@ -769,7 +773,7 @@ with tab4:
         if usar_manual_tc:
             registrar_tasa_manual(nueva_da, nueva_do, tc_ads_manual)
             registrar_tasa_manual(nueva_dd, nueva_do, tc_dropi_manual)
-        st.success("Configuración guardada.")
+        st.session_state["_msg_config"] = ("success", "Configuración guardada.")
         st.rerun()
 
     st.divider()
@@ -778,32 +782,40 @@ with tab4:
     archivo_ordenes = c1.file_uploader("Reporte de órdenes de Dropi (.xlsx)", type=["xlsx"])
     archivo_ads = c2.file_uploader("Reporte de Anuncios de Meta — nivel Anuncio, con columna 'Campaña' (.csv)", type=["csv"])
 
+    if st.session_state.get("_msg_carga"):
+        tipo, texto = st.session_state.pop("_msg_carga")
+        getattr(st, tipo)(texto)
+
     if st.button("💾 Guardar en memoria"):
+        mensajes = []
         if archivo_ordenes is None and archivo_ads is None:
-            st.warning("Sube al menos un archivo.")
+            mensajes.append(("warning", "Sube al menos un archivo."))
         else:
             if archivo_ordenes is not None:
                 df_new_ordenes = pd.read_excel(archivo_ordenes)
                 n = guardar_ordenes(usuario_activo, df_new_ordenes)
-                st.success(f"Órdenes: {n} filas nuevas agregadas (se ignoraron duplicados por ID).")
+                mensajes.append(("success", f"Órdenes: {n} filas nuevas agregadas (se ignoraron duplicados por ID+Producto)."))
             if archivo_ads is not None:
                 df_new_ads = pd.read_csv(archivo_ads)
                 cols_requeridas_ads = ["Nombre de la campaña", "Nombre del conjunto de anuncios", "Nombre del anuncio"]
                 faltantes = [c for c in cols_requeridas_ads if c not in df_new_ads.columns]
                 if faltantes:
                     if "Nombre del conjunto de anuncios" in faltantes or "Nombre del anuncio" in faltantes:
-                        st.error(
-                            f"Este CSV no trae {faltantes}. Parece el reporte **por Campaña** de Ads Manager "
-                            "(nivel campaña), pero aquí necesitas el reporte **por Anuncio** (nivel más detallado, "
-                            "con columnas de Campaña + Conjunto de anuncios + Anuncio). Revisa que estés exportando "
-                            "desde la vista 'Anuncios' en Ads Manager, no desde la vista 'Campañas'."
-                        )
+                        mensajes.append(("error",
+                            f"Este CSV no trae {faltantes}. Columnas encontradas: {list(df_new_ads.columns)}. "
+                            "Parece el reporte **por Campaña** de Ads Manager (nivel campaña), pero aquí necesitas "
+                            "el reporte **por Anuncio** (nivel más detallado, con columnas de Campaña + Conjunto "
+                            "de anuncios + Anuncio). Revisa que estés exportando desde la vista 'Anuncios' en Ads "
+                            "Manager, no desde la vista 'Campañas'."
+                        ))
                     else:
-                        st.error(f"Este CSV no trae {faltantes}. Agrégalas al exportar desde Ads Manager.")
+                        mensajes.append(("error", f"Este CSV no trae {faltantes}. Columnas encontradas: {list(df_new_ads.columns)}."))
                 else:
                     n = guardar_ads(usuario_activo, df_new_ads)
-                    st.success(f"Anuncios: {n} filas nuevas agregadas (se ignoraron duplicados).")
-            st.rerun()
+                    mensajes.append(("success", f"Anuncios: {n} filas nuevas agregadas (se ignoraron duplicados)."))
+        # Guardamos los mensajes en session_state para que sobrevivan al rerun y sí se vean.
+        st.session_state["_msg_carga"] = mensajes[-1] if len(mensajes) == 1 else ("info", " · ".join(m[1] for m in mensajes))
+        st.rerun()
 
     st.divider()
     st.subheader("6. Vincular anuncios a productos")
@@ -819,13 +831,16 @@ with tab4:
         productos_disponibles = sorted(df_ordenes["PRODUCTO"].dropna().unique()) if not df_ordenes.empty else []
 
         st.caption(f"{len(pendientes)} anuncios sin vincular de {len(combinaciones)} totales.")
+        if st.session_state.get("_msg_vinc"):
+            tipo, texto = st.session_state.pop("_msg_vinc")
+            getattr(st, tipo)(texto)
         if not pendientes.empty and productos_disponibles:
             fila = pendientes.iloc[0]
             st.write(f"**Campaña:** {fila['Nombre de la campaña']} · **Conjunto:** {fila['Nombre del conjunto de anuncios']} · **Anuncio:** {fila['Nombre del anuncio']}")
             producto_sel = st.selectbox("¿A qué producto pertenece?", productos_disponibles, key="vinc_producto")
             if st.button("🔗 Vincular"):
                 guardar_vinculo(usuario_activo, fila["Nombre de la campaña"], fila["Nombre del conjunto de anuncios"], fila["Nombre del anuncio"], producto_sel)
-                st.success("Vinculado.")
+                st.session_state["_msg_vinc"] = ("success", "Vinculado.")
                 st.rerun()
         elif pendientes.empty:
             st.success("Todos tus anuncios están vinculados a un producto. 🎉")
@@ -842,19 +857,22 @@ with tab4:
         "reporte se subió más de una vez antes de que existiera el control de duplicados."
     )
     c1, c2 = st.columns(2)
+    if st.session_state.get("_msg_limpieza"):
+        tipo, texto = st.session_state.pop("_msg_limpieza")
+        getattr(st, tipo)(texto)
     if c1.button("🧹 Detectar y eliminar duplicados en Órdenes"):
         eliminadas = limpiar_duplicados_ordenes(usuario_activo)
         if eliminadas > 0:
-            st.success(f"Se eliminaron {eliminadas} filas duplicadas de Memoria_Ordenes.")
+            st.session_state["_msg_limpieza"] = ("success", f"Se eliminaron {eliminadas} filas duplicadas de Memoria_Ordenes.")
         else:
-            st.info("No se encontraron duplicados.")
+            st.session_state["_msg_limpieza"] = ("info", "No se encontraron duplicados en Órdenes.")
         st.rerun()
     if c2.button("🧹 Detectar y eliminar duplicados en Anuncios"):
         eliminadas = limpiar_duplicados_ads(usuario_activo)
         if eliminadas > 0:
-            st.success(f"Se eliminaron {eliminadas} filas duplicadas de Memoria_Ads.")
+            st.session_state["_msg_limpieza"] = ("success", f"Se eliminaron {eliminadas} filas duplicadas de Memoria_Ads.")
         else:
-            st.info("No se encontraron duplicados.")
+            st.session_state["_msg_limpieza"] = ("info", "No se encontraron duplicados en Anuncios.")
         st.rerun()
 
 
