@@ -924,7 +924,8 @@ with tab1:
                 }
             ).reset_index().rename(columns={"FECHA_dt": "Fecha"})
             largo = agg.melt(id_vars="Fecha", value_vars=metricas_disp, var_name="Métrica", value_name="Cantidad")
-            st.plotly_chart(px.line(largo, x="Fecha", y="Cantidad", color="Métrica", markers=True), use_container_width=True)
+            fig_dash = px.bar(largo, x="Fecha", y="Cantidad", color="Métrica", barmode="group")
+            st.plotly_chart(fig_dash, use_container_width=True)
         else:
             st.info("Selecciona al menos un dato para graficar.")
 
@@ -950,9 +951,9 @@ with tab2:
         diario = df_vista.groupby("FECHA_iso").agg(Gasto=("_gasto", "sum"), Resultados=("_resultados", "sum"), Alcance=("_alcance", "sum")).reset_index()
         diario["Costo por resultado"] = diario["Gasto"] / diario["Resultados"].replace(0, np.nan)
         fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(x=diario["FECHA_iso"], y=diario["Gasto"], name="Gasto", mode="lines+markers"))
-        fig1.add_trace(go.Scatter(x=diario["FECHA_iso"], y=diario["Costo por resultado"], name="Costo por resultado (Meta)", mode="lines+markers", yaxis="y2"))
-        fig1.update_layout(yaxis=dict(title="Gasto"), yaxis2=dict(title="Costo por resultado", overlaying="y", side="right"), legend=dict(orientation="h"))
+        fig1.add_trace(go.Bar(x=diario["FECHA_iso"], y=diario["Gasto"], name="Gasto"))
+        fig1.add_trace(go.Bar(x=diario["FECHA_iso"], y=diario["Costo por resultado"], name="Costo por resultado (Meta)", yaxis="y2"))
+        fig1.update_layout(barmode="group", yaxis=dict(title="Gasto"), yaxis2=dict(title="Costo por resultado", overlaying="y", side="right"), legend=dict(orientation="h"))
         st.plotly_chart(fig1, use_container_width=True)
         st.plotly_chart(px.bar(diario, x="FECHA_iso", y="Alcance", title="Alcance diario"), use_container_width=True)
 
@@ -966,8 +967,8 @@ with tab2:
         comparativo = gasto_dia.merge(ord_dia, on="FECHA_iso", how="outer").fillna(0).sort_values("FECHA_iso")
         fig2 = go.Figure()
         fig2.add_trace(go.Bar(x=comparativo["FECHA_iso"], y=comparativo["Órdenes"], name="Órdenes"))
-        fig2.add_trace(go.Scatter(x=comparativo["FECHA_iso"], y=comparativo["Gasto"], name="Gasto Ads", yaxis="y2", mode="lines+markers"))
-        fig2.update_layout(yaxis=dict(title="Órdenes"), yaxis2=dict(title=f"Gasto ({DO})", overlaying="y", side="right"))
+        fig2.add_trace(go.Bar(x=comparativo["FECHA_iso"], y=comparativo["Gasto"], name="Gasto Ads", yaxis="y2"))
+        fig2.update_layout(barmode="group", yaxis=dict(title="Órdenes"), yaxis2=dict(title=f"Gasto ({DO})", overlaying="y", side="right"))
         st.plotly_chart(fig2, use_container_width=True)
 
         st.divider()
