@@ -957,19 +957,43 @@ with tab2:
         st.plotly_chart(fig1, use_container_width=True)
         st.plotly_chart(px.bar(diario, x="FECHA_iso", y="Alcance", title="Alcance diario"), use_container_width=True)
 
-        st.subheader(f"Órdenes del día vs. gasto total en publicidad ({DO})")
+        st.subheader(f"Órdenes del día vs. gasto en publicidad ({DO})")
+        # Si hay campañas filtradas arriba, se usan sus productos vinculados (sección 6) para
+        # contar solo LAS ÓRDENES DE ESOS PRODUCTOS — así el gasto y las órdenes comparan lo mismo,
+        # en vez del total de la tienda contra el gasto de solo algunas campañas.
+        productos_filtro = None
+        if seleccion and not df_vinc.empty:
+            vinc_sel = df_vinc[df_vinc["Campaña"].isin(seleccion)]
+            if not vinc_sel.empty:
+                productos_filtro = set()
+                for etiqueta in vinc_sel["Producto"]:
+                    productos_filtro.update(p.strip() for p in str(etiqueta).split(SEP_PRODUCTOS.strip()))
+
         ord_rango_all = en_rango(df_ordenes, "FECHA_iso", ini, fin) if not df_ordenes.empty else df_ordenes
         if ord_rango_all is not None and not ord_rango_all.empty:
-            ord_dia = ord_rango_all.drop_duplicates("ID").groupby("FECHA_iso").size().reset_index(name="Órdenes")
+            ord_base = ord_rango_all.drop_duplicates("ID")
+            if productos_filtro:
+                ord_base = ord_base[ord_base["PRODUCTO"].astype(str).str.strip().isin(productos_filtro)]
+            ord_dia = ord_base.groupby("FECHA_iso").size().reset_index(name="Órdenes")
         else:
             ord_dia = pd.DataFrame(columns=["FECHA_iso", "Órdenes"])
-        gasto_dia = df_ads_rango.groupby("FECHA_iso")["_gasto_o"].sum().reset_index(name="Gasto")
+        gasto_dia = df_vista.groupby("FECHA_iso")["_gasto_o"].sum().reset_index(name="Gasto")  # respeta el filtro de campaña
         comparativo = gasto_dia.merge(ord_dia, on="FECHA_iso", how="outer").fillna(0).sort_values("FECHA_iso")
+        comparativo["Costo por orden"] = comparativo["Gasto"] / comparativo["Órdenes"].replace(0, np.nan)
+
         fig2 = go.Figure()
         fig2.add_trace(go.Bar(x=comparativo["FECHA_iso"], y=comparativo["Órdenes"], name="Órdenes"))
         fig2.add_trace(go.Bar(x=comparativo["FECHA_iso"], y=comparativo["Gasto"], name="Gasto Ads", yaxis="y2"))
         fig2.update_layout(barmode="group", yaxis=dict(title="Órdenes"), yaxis2=dict(title=f"Gasto ({DO})", overlaying="y", side="right"))
         st.plotly_chart(fig2, use_container_width=True)
+
+        tabla_comp = comparativo.rename(columns={"FECHA_iso": "Fecha", "Gasto": f"Gasto ({DO})", "Costo por orden": f"Costo por orden ({DO})"})
+        st.dataframe(tabla_comp[["Fecha", "Órdenes", f"Gasto ({DO})", f"Costo por orden ({DO})"]].round(2), use_container_width=True, hide_index=True)
+        if seleccion and productos_filtro:
+            st.caption(f"Órdenes filtradas a los productos vinculados a {', '.join(seleccion)}.")
+        elif seleccion:
+            st.warning("Las campañas filtradas arriba no tienen productos vinculados todavía (sección 6 del Panel de Control), "
+                       "así que la tabla muestra el total de órdenes de la tienda, no solo las de esas campañas.")
 
         st.divider()
         st.subheader(f"Rentabilidad real por producto (cruce Ads × Dropi) — importes en {DO}")
